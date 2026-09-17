@@ -1,0 +1,320 @@
+-- The parser: the crate's `src/lib.rs`, for arguments that are Meadow
+-- strings, and so always Unicode.
+--
+-- Copyright Jan Verbeek and the lexopt contributors, and the Meadow port's
+-- authors. Licensed under MIT: see LICENSE and COPYRIGHT.
+
+use Std.Collections.Vector as V
+use Std.String as S
+use Std.Ref (modify)
+use lexopt.Debug (debugString)
+
+-- One piece of the command line.
+@pub data Arg =
+  -- `-c`, alone or in a run like `-abc`.
+  Short Char
+  -- `--name`, without the dashes.
+  | Long String
+  -- Anything else: a positional argument.
+  | Value String
+
+-- What went wrong.
+@pub data Error =
+  -- An option, if one was just read, needs a value and none is left.
+  MissingValue (Maybe String)
+  -- An option the program does not know.
+  | UnexpectedOption String
+  -- A positional argument the program does not want.
+  | UnexpectedArgument String
+  -- `option`, which takes no value, was given `value`, as `--option=value`.
+  | UnexpectedValue String String
+  -- `value` could not be parsed, for the reason given.
+  | ParsingFailed String String
+  -- Anything else, in the program's words.
+  | Custom String
+
+-- The error as the crate's `Display` writes it.
+@pub fun errorMessage e =
+  match e with
+  | Error.MissingValue None -> "missing argument"
+  | Error.MissingValue (Just option) -> "missing argument for option '${option}'"
+  | Error.UnexpectedOption option -> "invalid option '${option}'"
+  | Error.UnexpectedArgument value -> "unexpected argument ${debugString value}"
+  | Error.UnexpectedValue option value -> "unexpected argument for option '${option}': ${debugString value}"
+  | Error.ParsingFailed value reason -> "cannot parse argument ${debugString value}: ${reason}"
+  | Error.Custom message -> message
+
+-- The error for an argument the program did not expect.
+@pub fun unexpected arg =
+  match arg with
+  | Arg.Short c -> Error.UnexpectedOption "-${charsToString #[c]}"
+  | Arg.Long name -> Error.UnexpectedOption "--${name}"
+  | Arg.Value value -> Error.UnexpectedArgument value
+
+-- `value` run through `parse`, which gives `Err reason` when it fails.
+@pub fun parseWith parse value =
+  match parse value with
+  | Ok x -> Ok x
+  | Err reason -> Err (Error.ParsingFailed value reason)
+
+-- --- the parser ---------------------------------------------------------------------------
+
+data Phase =
+  Ready
+  -- The value of `--option=value`, not yet taken.
+  | Pending String
+  -- A run of short options, and the byte where the next one starts.
+  | Shorts String Int
+  -- After `--`: everything is a value.
+  | Finished
+
+data LastOption = NoOption | ShortOption Char | LongOption String
+
+record Inner = {
+  args : [String],
+  phase : Phase,
+  lastOption : LastOption,
+  binName : Maybe String,
+  shortEquals : Bool
+}
+
+-- A command line being read, one piece at a time.
+@pub data Parser = Parser (Ref Inner)
+
+fun inner p =
+  match p with
+  | Parser r -> r
+
+fun fresh binName args =
+  let start =
+    Inner {
+      args = args,
+      phase = Phase.Ready,
+      lastOption = LastOption.NoOption,
+      binName = binName,
+      shortEquals = True
+    }
+  in
+  Parser (newRef start)
+
+-- A parser for `args`, which do not include the program's name.
+@pub fun parserFromArgs args = fresh None args
+
+-- A parser for `args`, the first of which is the program's name.
+@pub fun parserFromIter args =
+  match V.get args 0 with
+  | Just name -> fresh (Just name) (V.drop args 1)
+  | None -> fresh None args
+
+-- A parser for the program's own arguments. Meadow does not give the
+-- program's name, so `binName` is `None`.
+@pub fun parserFromEnv () = parserFromArgs (argv ())
+
+fun state p = getRef (inner p)
+
+fun update p f = modify (inner p) f
+
+fun setPhase p phase = update p (\(s : Inner) -> { s | phase = phase })
+
+-- The next raw argument, taken.
+fun takeArg p =
+  let (s : Inner) = state p in
+  match V.get s.args 0 with
+  | Just arg ->
+      let _ = update p (\(t : Inner) -> { t | args = V.drop t.args 1 }) in
+      Just arg
+  | None -> None
+
+-- Every raw argument left, taken.
+fun takeAll p =
+  let (s : Inner) = state p in
+  let _ = update p (\(t : Inner) -> { t | args = V.empty }) in
+  s.args
+
+fun lastOptionText p =
+  match (state p).lastOption with
+  | LastOption.NoOption -> None
+  | LastOption.ShortOption c -> Just "-${charsToString #[c]}"
+  | LastOption.LongOption name -> Just name
+
+fun lastOptionOr p =
+  match lastOptionText p with
+  | Just text -> text
+  | None -> ""
+
+-- The character starting at byte `at`, and how many bytes it takes.
+fun charAtByte s at =
+  let b = toInt (stringByteAt s at) in
+  let n = if b < 0x80 then 1 else if b < 0xE0 then 2 else if b < 0xF0 then 3 else 4 in
+  (arrayGet (stringToChars (stringSlice s at (at + n))) 0, n)
+
+fun setLong p option =
+  let _ = update p (\(s : Inner) -> { s | lastOption = LastOption.LongOption option }) in
+  Arg.Long (S.drop option 2)
+
+fun hasPending p =
+  match (state p).phase with
+  | Phase.Pending _ -> True
+  | Phase.Shorts arg at -> at < stringByteLength arg
+  | _ -> False
+
+-- The value attached to the last option, if there is one, and whether it was
+-- written after an `=` in a run of short options.
+fun rawOptionalValue p =
+  let (s : Inner) = state p in
+  match s.phase with
+  | Phase.Pending value ->
+      let _ = setPhase p Phase.Ready in
+      Just (value, True)
+  | Phase.Shorts arg at ->
+      let _ = setPhase p Phase.Ready in
+      let n = stringByteLength arg in
+      if at >= n
+      then None
+      else if toInt (stringByteAt arg at) == 61 and s.shortEquals
+      then Just (stringSlice arg (at + 1) n, True)
+      else Just (stringSlice arg at n, False)
+  | _ -> None
+
+-- The value attached to the last option -- `--option=value`, `-ovalue` or
+-- `-o=value` -- if there is one.
+@pub fun optionalValue p =
+  match rawOptionalValue p with
+  | Just (value, _) -> Just value
+  | None -> None
+
+-- The next piece of the command line, or `None` at the end.
+@pub fun nextArg p =
+  let (s : Inner) = state p in
+  match s.phase with
+  | Phase.Pending value ->
+      let _ = setPhase p Phase.Ready in
+      Err (Error.UnexpectedValue (lastOptionOr p) value)
+  | Phase.Shorts arg at ->
+      if at >= stringByteLength arg
+      then
+        let _ = setPhase p Phase.Ready in
+        readArg p
+      else
+        (match charAtByte arg at with
+         | (c, n) ->
+             if charCode c == 61 and at > 1 and s.shortEquals
+             then
+               let option = lastOptionOr p in
+               let value =
+                 match optionalValue p with
+                 | Just v -> v
+                 | None -> ""
+               in
+               Err (Error.UnexpectedValue option value)
+             else
+               let advance = \(t : Inner) ->
+                 { t | phase = Phase.Shorts arg (at + n), lastOption = LastOption.ShortOption c }
+               in
+               let _ = update p advance in
+               Ok (Just (Arg.Short c)))
+  | Phase.Finished ->
+      (match takeArg p with
+       | Just arg -> Ok (Just (Arg.Value arg))
+       | None -> Ok None)
+  | Phase.Ready -> readArg p
+
+fun readArg p =
+  match takeArg p with
+  | None -> Ok None
+  | Just arg ->
+      if arg == "--"
+      then
+        let _ = setPhase p Phase.Finished in
+        nextArg p
+      else if S.startsWith "--" arg
+      then
+        match S.indexOf "=" arg with
+        | Just at ->
+            let _ = setPhase p (Phase.Pending (S.drop arg (at + 1))) in
+            Ok (Just (setLong p (S.take arg at)))
+        | None -> Ok (Just (setLong p arg))
+      else if stringByteLength arg > 1 and toInt (stringByteAt arg 0) == 45
+      then
+        let _ = setPhase p (Phase.Shorts arg 1) in
+        nextArg p
+      else Ok (Just (Arg.Value arg))
+
+-- The value of the option just read: attached to it, or the next argument,
+-- whatever that looks like.
+@pub fun value p =
+  match optionalValue p with
+  | Just v -> Ok v
+  | None ->
+      match takeArg p with
+      | Just v -> Ok v
+      | None -> Err (Error.MissingValue (lastOptionText p))
+
+-- Whether the next raw argument is a value rather than an option.
+fun nextIsNormal p =
+  let (s : Inner) = state p in
+  match V.get s.args 0 with
+  | None -> False
+  | Just arg ->
+      match s.phase with
+      | Phase.Finished -> True
+      | _ -> arg == "-" or not (S.startsWith "-" arg)
+
+fun takeIfNormal p = if nextIsNormal p then takeArg p else None
+
+-- Every value of the option just read: one attached to it, and the arguments
+-- after it up to the next option. At least one, or an error.
+@pub fun values p =
+  if hasPending p or nextIsNormal p
+  then
+    let rec rest acc =
+      match takeIfNormal p with
+      | Just v -> rest (V.pushBack acc v)
+      | None -> acc
+    in
+    match rawOptionalValue p with
+    | Just (v, True) -> Ok [v]
+    | Just (v, False) -> Ok (rest [v])
+    | None ->
+        match takeIfNormal p with
+        | Just v -> Ok (rest [v])
+        | None -> Ok V.empty
+  else Err (Error.MissingValue (lastOptionText p))
+
+-- Checks that the last option has no value attached, as the crate's
+-- `raw_args` does before handing out the rest.
+fun rawCheck p =
+  match optionalValue p with
+  | Just v -> Err (Error.UnexpectedValue (lastOptionOr p) v)
+  | None -> Ok ()
+
+-- Every argument left, as it is, unless the last option has a value attached.
+@pub fun rawArgs p =
+  match rawCheck p with
+  | Ok _ -> Ok (takeAll p)
+  | Err e -> Err e
+
+-- The next raw argument, without taking it.
+@pub fun rawPeek p =
+  match rawCheck p with
+  | Ok _ -> Ok (V.get (state p).args 0)
+  | Err e -> Err e
+
+-- The next raw argument, taken if `keep` says so.
+@pub fun rawNextIf keep p =
+  match rawCheck p with
+  | Ok _ ->
+      (match V.get (state p).args 0 with
+       | Just arg -> if keep arg then Ok (takeArg p) else Ok None
+       | None -> Ok None)
+  | Err e -> Err e
+
+-- Every argument left, as it is, or `None` if the last option has a value
+-- attached (which stays).
+@pub fun tryRawArgs p = if hasPending p then None else Just (takeAll p)
+
+-- The program's name, if the parser was given it.
+@pub fun binName p = (state p).binName
+
+-- Whether `-o=value` means `value` rather than `=value`. On unless turned off.
+@pub fun setShortEquals on p = update p (\(s : Inner) -> { s | shortEquals = on })

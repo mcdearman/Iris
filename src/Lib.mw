@@ -1,0 +1,27 @@
+-- lexopt: a minimal, pedantic reader of command lines. It hands the program
+-- one piece at a time -- a short option, a long option or a value -- and the
+-- program decides what each means. A port of Rust's `lexopt` crate, version
+-- 0.3.2.
+--
+--   use lexopt (parserFromEnv, nextArg, value, Short, Long, Value, unexpected)
+--
+--   fun parse p opts =
+--     match nextArg p with
+--     | Ok (Just (Short 'n')) -> ...
+--     | Ok (Just (Long "name")) -> ... value p ...
+--     | Ok (Just (Value file)) -> ...
+--     | Ok (Just other) -> Err (unexpected other)
+--     | Ok None -> Ok opts
+--     | Err e -> Err e
+
+mod Tables
+mod Debug
+mod Lexopt
+@cfg(test)
+mod Cases
+@cfg(test)
+mod Tests
+
+@pub use lexopt.Lexopt
+@pub use lexopt.Lexopt.Arg.*
+@pub use lexopt.Debug (debugString)
