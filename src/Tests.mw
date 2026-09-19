@@ -11,11 +11,11 @@ use Std.Collections.Vector as V
 @cfg(test)
 use Std.String as S
 @cfg(test)
-use lexopt.Cases (cases)
+use Lexopt.Cases (cases)
 @cfg(test)
-use lexopt.Lexopt
+use Lexopt.Lexopt
 @cfg(test)
-use lexopt.Debug (debugString)
+use Lexopt.Debug (debugString)
 
 @cfg(test)
 fun num i n =

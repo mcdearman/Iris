@@ -7,7 +7,7 @@
 use Std.Collections.Vector as V
 use Std.String as S
 use Std.Ref (modify)
-use lexopt.Debug (debugString)
+use Lexopt.Debug (debugString)
 
 -- One piece of the command line.
 @pub data Arg =

@@ -13,13 +13,13 @@ messages.
 ## Install
 
 ```sh
-meadow add mcdearman/meadow-lexopt
+meadow add mcdearman/MeadowLexopt
 ```
 
 ## Use
 
 ```meadow
-use lexopt (parserFromArgs, nextArg, value, parseWith, unexpected, errorMessage, Short, Long, Value)
+use Lexopt (parserFromArgs, nextArg, value, parseWith, unexpected, errorMessage, Short, Long, Value)
 use Std.String as S
 
 fun number s =
