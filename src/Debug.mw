@@ -7,7 +7,7 @@
 
 use Std.Collections.Vector as V
 use Std.String as S
-use Lexopt.Tables (escapedRanges)
+use Iris.Tables (escapedRanges)
 
 -- The code point written as 4 base-64 digits at `at` in the table.
 fun codeAt at =

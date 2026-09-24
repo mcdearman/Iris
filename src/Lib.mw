@@ -3,7 +3,7 @@
 -- program decides what each means. A port of Rust's `lexopt` crate, version
 -- 0.3.2.
 --
---   use Lexopt (parserFromEnv, nextArg, value, Short, Long, Value, unexpected)
+--   use Iris (parserFromEnv, nextArg, value, Short, Long, Value, unexpected)
 --
 --   fun parse p opts =
 --     match nextArg p with
@@ -22,6 +22,6 @@ mod Cases
 @cfg(test)
 mod Tests
 
-@pub use Lexopt.Lexopt
-@pub use Lexopt.Lexopt.Arg.*
-@pub use Lexopt.Debug (debugString)
+@pub use Iris.Lexopt
+@pub use Iris.Lexopt.Arg.*
+@pub use Iris.Debug (debugString)

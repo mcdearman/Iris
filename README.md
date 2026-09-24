@@ -1,4 +1,4 @@
-# lexopt
+# iris
 
 A small, strict command-line reader for
 [Meadow](https://github.com/mcdearman/meadow). It hands your program one piece
@@ -13,13 +13,13 @@ messages.
 ## Install
 
 ```sh
-meadow add mcdearman/MeadowLexopt
+meadow add mcdearman/Iris
 ```
 
 ## Use
 
 ```meadow
-use Lexopt (parserFromArgs, nextArg, value, parseWith, unexpected, errorMessage, Short, Long, Value)
+use Iris (parserFromArgs, nextArg, value, parseWith, unexpected, errorMessage, Short, Long, Value)
 use Std.String as S
 
 fun number s =
